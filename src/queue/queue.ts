@@ -1,10 +1,15 @@
 import PgBoss from 'pg-boss';
+import type { PoolClient } from 'pg';
+
+/** Handler for jobs on a queue; receives one job at a time. */
+export type JobHandler<T extends object> = (data: T) => Promise<void>;
 
 /**
  * Thin wrapper over pg-boss that tracks started state so readiness checks can
  * report whether the queue is up. pg-boss stores its jobs in the same Postgres
- * database as the write model (ADR-0001), which is what lets the confirmation
- * email be enqueued in the same transaction that creates the account.
+ * database as the write model (ADR-0001), which is what lets the Confirmation
+ * Email be enqueued in the same transaction that creates the account — see
+ * {@link sendInTransaction}.
  */
 export class Queue {
   private readonly boss: PgBoss;
@@ -31,5 +36,34 @@ export class Queue {
 
   isStarted(): boolean {
     return this.started;
+  }
+
+  /** Ensure a queue exists. Idempotent; safe to call from every entrypoint on boot. */
+  async createQueue(name: string): Promise<void> {
+    await this.boss.createQueue(name);
+  }
+
+  /**
+   * Enqueue a job on the caller's open transaction. Routing pg-boss's INSERT
+   * through `client` (instead of pg-boss's own pool) means the job row and
+   * whatever else the caller wrote share one atomic COMMIT: both land or neither
+   * does (ADR-0001). Retries are configured here so at-least-once delivery
+   * (ADR-0002) holds for every enqueued job.
+   */
+  async sendInTransaction(name: string, data: object, client: PoolClient): Promise<void> {
+    await this.boss.send(name, data, {
+      db: { executeSql: (text, values) => client.query(text, values) },
+      retryLimit: 5,
+      retryBackoff: true,
+    });
+  }
+
+  /** Register a consumer for a queue. Errors thrown by `handler` trigger pg-boss retries. */
+  async work<T extends object>(name: string, handler: JobHandler<T>): Promise<void> {
+    await this.boss.work<T>(name, async (jobs) => {
+      for (const job of jobs) {
+        await handler(job.data);
+      }
+    });
   }
 }

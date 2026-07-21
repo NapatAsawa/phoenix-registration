@@ -44,6 +44,15 @@ npm run dev:worker
 - API: http://localhost:3000
 - Mailpit UI: http://localhost:8025
 
+## API
+
+- `POST /registrations` — body `{ email, password }`. Validates at the edge (valid email;
+  password 8–128 chars), then in one transaction creates a **Pending** Account (argon2id
+  password hash, UNIQUE email) and enqueues the Confirmation Email. Returns `202` on
+  success, `400` on invalid input, `409` if the email is already registered. The worker
+  sends the Confirmation Email, whose link carries a single-use Verification Token (only its
+  sha256 is stored), built from `PUBLIC_BASE_URL`.
+
 ## Health
 
 - `GET /healthz` — liveness, always 200 while the process is up.

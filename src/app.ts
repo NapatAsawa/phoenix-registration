@@ -1,4 +1,5 @@
 import Fastify, { type FastifyInstance } from 'fastify';
+import { registerRegistrationRoutes, type RegistrationPort } from './api/registrations.js';
 
 /**
  * Readiness dependencies the app probes on `GET /readyz`. Passing these as
@@ -16,14 +17,22 @@ export interface ReadinessChecks {
 export interface BuildAppOptions {
   checks: ReadinessChecks;
   logger?: boolean;
+  /**
+   * Registration write side. Optional so the health surface can be built in
+   * isolation (as the unit tests do); the API entrypoint always supplies it.
+   */
+  registration?: RegistrationPort;
 }
 
 /**
- * Builds the Fastify app exposing the operational health surface.
+ * Builds the Fastify app exposing the operational health surface, plus the
+ * registration route when a {@link RegistrationPort} is supplied.
  *
  * - `GET /healthz` (liveness): always 200 while the process is up.
  * - `GET /readyz` (readiness): 200 when the DB is reachable and the queue is
  *   started; 503 otherwise.
+ * - `POST /registrations`: creates a Pending Account and queues its Confirmation
+ *   Email (only when `registration` is provided).
  */
 export function buildApp(options: BuildAppOptions): FastifyInstance {
   const app = Fastify({ logger: options.logger ?? false });
@@ -48,6 +57,10 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
     }
     return reply.code(503).send({ status: 'not-ready', ...details });
   });
+
+  if (options.registration) {
+    registerRegistrationRoutes(app, options.registration);
+  }
 
   return app;
 }
