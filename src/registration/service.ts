@@ -1,0 +1,89 @@
+import type { PoolClient } from 'pg';
+import { hashPassword } from './password.js';
+import { generateVerificationToken, VERIFICATION_TOKEN_TTL_MS } from './token.js';
+import type { RegistrationInput } from './validation.js';
+import { ACCOUNT_STATUS } from '../db/schema.js';
+import { CONFIRMATION_EMAIL_QUEUE, type ConfirmationEmailJob } from '../queue/jobs.js';
+
+/**
+ * Registration write side: create the Pending Account and enqueue its
+ * Confirmation Email in one atomic step.
+ *
+ * The whole point of this module is the transaction. It checks out a single
+ * connection, and both the account INSERT and the pg-boss enqueue run on that
+ * connection between BEGIN and COMMIT, so ADR-0001's guarantee holds literally:
+ * an account never exists without a pending email job, and a job never exists
+ * for an account that failed to persist.
+ *
+ * The Verification Token is minted here too: its sha256 and 24h expiry are
+ * written onto the account row, and the plaintext is handed to the job. Storing
+ * the hash atomically with the account means the token is fixed the moment the
+ * account exists, so every (at-least-once) delivery of the job emits the same
+ * link (ADR-0002). The plaintext is never persisted on the account.
+ */
+
+/** Just the slice of `pg.Pool` the service needs — a connection to run a tx on. */
+export interface PoolLike {
+  connect(): Promise<PoolClient>;
+}
+
+/** Just the slice of {@link Queue} the service needs — a transaction-aware enqueue. */
+export interface EnqueuerLike {
+  sendInTransaction(name: string, data: object, client: PoolClient): Promise<void>;
+}
+
+export interface RegisterDeps {
+  pool: PoolLike;
+  queue: EnqueuerLike;
+}
+
+export type RegisterResult =
+  | { ok: true; accountId: string }
+  // Email already registered. The UNIQUE constraint is the source of truth, so
+  // this is reported by the database under concurrency, not a pre-check.
+  | { ok: false; reason: 'duplicate-email' };
+
+const UNIQUE_VIOLATION = '23505';
+
+export async function registerAccount(
+  deps: RegisterDeps,
+  input: RegistrationInput,
+): Promise<RegisterResult> {
+  // Hash before opening the transaction: argon2 is deliberately slow and there is
+  // no reason to hold a connection (and a row lock) while it runs.
+  const passwordHash = await hashPassword(input.password);
+  const { token, tokenHash } = generateVerificationToken();
+  const tokenExpiresAt = new Date(Date.now() + VERIFICATION_TOKEN_TTL_MS);
+
+  const client = await deps.pool.connect();
+  try {
+    await client.query('BEGIN');
+
+    const inserted = await client.query(
+      `INSERT INTO accounts (email, password_hash, status, token_hash, token_expires_at)
+       VALUES ($1, $2, $3, $4, $5)
+       RETURNING id`,
+      [input.email, passwordHash, ACCOUNT_STATUS.pending, tokenHash, tokenExpiresAt],
+    );
+    const accountId = inserted.rows[0].id as string;
+
+    const job: ConfirmationEmailJob = { accountId, token };
+    await deps.queue.sendInTransaction(CONFIRMATION_EMAIL_QUEUE, job, client);
+
+    await client.query('COMMIT');
+    return { ok: true, accountId };
+  } catch (err) {
+    await client.query('ROLLBACK');
+    if (isUniqueViolation(err)) {
+      return { ok: false, reason: 'duplicate-email' };
+    }
+    throw err;
+  } finally {
+    client.release();
+  }
+}
+
+function isUniqueViolation(err: unknown): boolean {
+  return typeof err === 'object' && err !== null && 'code' in err &&
+    (err as { code?: string }).code === UNIQUE_VIOLATION;
+}
