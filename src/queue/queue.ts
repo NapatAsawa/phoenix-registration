@@ -5,6 +5,19 @@ import type { PoolClient } from 'pg';
 export type JobHandler<T extends object> = (data: T) => Promise<void>;
 
 /**
+ * How long a finished job's row survives before pg-boss deletes it. A finished
+ * Confirmation Email job carries the plaintext Verification Token in its payload
+ * (so retries re-emit the same link, ADR-0002), so its row is sensitive at rest.
+ * pg-boss's defaults keep finished jobs ~7.5 days (12h in `job`, then 7 days in
+ * `archive`) — far longer than the token's 24h life, leaving a reversible secret
+ * lying around long after it's useful. These knobs shrink that window to ~an
+ * hour: a DB/backup read then yields at most a handful of live tokens, and the
+ * durable `accounts` row never holds the plaintext at all.
+ */
+const ARCHIVE_FINISHED_AFTER_SECONDS = 600; // move out of `job` 10 min after finish
+const DELETE_ARCHIVED_AFTER_HOURS = 1; // then purge from `archive` an hour later
+
+/**
  * Thin wrapper over pg-boss that tracks started state so readiness checks can
  * report whether the queue is up. pg-boss stores its jobs in the same Postgres
  * database as the write model (ADR-0001), which is what lets the Confirmation
@@ -16,7 +29,14 @@ export class Queue {
   private started = false;
 
   constructor(databaseUrl: string) {
-    this.boss = new PgBoss({ connectionString: databaseUrl });
+    this.boss = new PgBoss({
+      connectionString: databaseUrl,
+      // Keep sensitive finished-job payloads (see the retention constants above)
+      // from lingering past the token's usefulness.
+      archiveCompletedAfterSeconds: ARCHIVE_FINISHED_AFTER_SECONDS,
+      archiveFailedAfterSeconds: ARCHIVE_FINISHED_AFTER_SECONDS,
+      deleteAfterHours: DELETE_ARCHIVED_AFTER_HOURS,
+    });
     // pg-boss surfaces background failures via 'error'; swallowing them would
     // crash the process on an unhandled emitter error.
     this.boss.on('error', () => {
