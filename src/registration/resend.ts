@@ -1,4 +1,4 @@
-import { generateVerificationToken, VERIFICATION_TOKEN_TTL_MS } from './token.js';
+import { mintVerificationToken } from './token.js';
 import type { EnqueuerLike, PoolLike } from './service.js';
 import { ACCOUNT_STATUS } from '../db/schema.js';
 import { CONFIRMATION_EMAIL_QUEUE, type ConfirmationEmailJob } from '../queue/jobs.js';
@@ -42,8 +42,7 @@ export type ResendResult =
   | { ok: false; reason: 'throttled' };
 
 export async function resendConfirmation(deps: ResendDeps, email: string): Promise<ResendResult> {
-  const { token, tokenHash } = generateVerificationToken();
-  const tokenExpiresAt = new Date(Date.now() + VERIFICATION_TOKEN_TTL_MS);
+  const { token, tokenHash, expiresAt } = mintVerificationToken();
 
   const client = await deps.pool.connect();
   try {
@@ -67,7 +66,7 @@ export async function resendConfirmation(deps: ResendDeps, email: string): Promi
         [
           email,
           tokenHash,
-          tokenExpiresAt,
+          expiresAt,
           ACCOUNT_STATUS.pending,
           RESEND_MAX_COUNT,
           RESEND_MIN_INTERVAL_SECONDS,

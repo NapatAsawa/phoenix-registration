@@ -1,26 +1,28 @@
 import type { PoolClient } from 'pg';
 import { hashPassword } from './password.js';
 import { resendConfirmation } from './resend.js';
-import { generateVerificationToken, VERIFICATION_TOKEN_TTL_MS } from './token.js';
+import { mintVerificationToken } from './token.js';
 import type { RegistrationInput } from './validation.js';
 import { ACCOUNT_STATUS } from '../db/schema.js';
 import { CONFIRMATION_EMAIL_QUEUE, type ConfirmationEmailJob } from '../queue/jobs.js';
 
 /**
- * Registration write side: create the Pending Account and enqueue its
- * Confirmation Email in one atomic step.
+ * Registration write side. Two responsibilities, in order:
  *
- * The whole point of this module is the transaction. It checks out a single
- * connection, and both the account INSERT and the pg-boss enqueue run on that
- * connection between BEGIN and COMMIT, so ADR-0001's guarantee holds literally:
- * an account never exists without a pending email job, and a job never exists
- * for an account that failed to persist.
+ *  1. The atomic create. {@link insertPendingAccount} checks out a single
+ *     connection and runs both the account INSERT and the pg-boss enqueue on it
+ *     between BEGIN and COMMIT, so ADR-0001's guarantee holds literally: an
+ *     account never exists without a pending email job, and a job never exists
+ *     for an account that failed to persist. The Verification Token is minted
+ *     here (sha256 + 24h expiry stored on the row, plaintext handed to the job),
+ *     so it is fixed the moment the account exists and every at-least-once
+ *     delivery emits the same link (ADR-0002).
  *
- * The Verification Token is minted here too: its sha256 and 24h expiry are
- * written onto the account row, and the plaintext is handed to the job. Storing
- * the hash atomically with the account means the token is fixed the moment the
- * account exists, so every (at-least-once) delivery of the job emits the same
- * link (ADR-0002). The plaintext is never persisted on the account.
+ *  2. Collision handling (issue #5). When the email is already taken, the row is
+ *     either Active — a genuine 409 — or still Pending, in which case this
+ *     registration is a Resend and is delegated to {@link resendConfirmation}
+ *     (which owns the Layer-1 throttle). The UNIQUE constraint, not a pre-check,
+ *     is what tells us the email is taken.
  */
 
 /** Just the slice of `pg.Pool` the service needs — a connection to run a tx on. */
@@ -59,36 +61,9 @@ export async function registerAccount(
   deps: RegisterDeps,
   input: RegistrationInput,
 ): Promise<RegisterResult> {
-  // Hash before opening the transaction: argon2 is deliberately slow and there is
-  // no reason to hold a connection (and a row lock) while it runs.
-  const passwordHash = await hashPassword(input.password);
-  const { token, tokenHash } = generateVerificationToken();
-  const tokenExpiresAt = new Date(Date.now() + VERIFICATION_TOKEN_TTL_MS);
-
-  const client = await deps.pool.connect();
-  try {
-    await client.query('BEGIN');
-
-    const inserted = await client.query(
-      `INSERT INTO accounts (email, password_hash, status, token_hash, token_expires_at)
-       VALUES ($1, $2, $3, $4, $5)
-       RETURNING id`,
-      [input.email, passwordHash, ACCOUNT_STATUS.pending, tokenHash, tokenExpiresAt],
-    );
-    const accountId = inserted.rows[0].id as string;
-
-    const job: ConfirmationEmailJob = { accountId, token };
-    await deps.queue.sendInTransaction(CONFIRMATION_EMAIL_QUEUE, job, client);
-
-    await client.query('COMMIT');
-    client.release();
-    return { ok: true, outcome: 'created', accountId };
-  } catch (err) {
-    await client.query('ROLLBACK');
-    client.release();
-    if (!isUniqueViolation(err)) throw err;
-    // Fell through only on a duplicate email. Release first (above) so we don't
-    // hold two connections while the Resend path opens its own.
+  const inserted = await insertPendingAccount(deps, input);
+  if (inserted.status === 'created') {
+    return { ok: true, outcome: 'created', accountId: inserted.accountId };
   }
 
   // The email is taken. If the existing Account is still Pending this is a Resend;
@@ -105,6 +80,50 @@ export async function registerAccount(
       // The row vanished between the UNIQUE violation and the Resend (a Sweep in
       // the gap, issue #6). Vanishingly rare; report taken and let the client retry.
       return { ok: false, reason: 'duplicate-email' };
+  }
+}
+
+type InsertOutcome = { status: 'created'; accountId: string } | { status: 'duplicate' };
+
+/**
+ * The atomic create half of registration: INSERT the Pending Account and enqueue
+ * its Confirmation Email on one connection, or report `duplicate` if the email is
+ * already taken (the UNIQUE constraint is the source of truth). Kept separate so
+ * the single connection is released under one `finally` before the Resend path,
+ * if any, opens its own.
+ */
+async function insertPendingAccount(
+  deps: RegisterDeps,
+  input: RegistrationInput,
+): Promise<InsertOutcome> {
+  // Hash before opening the transaction: argon2 is deliberately slow and there is
+  // no reason to hold a connection (and a row lock) while it runs.
+  const passwordHash = await hashPassword(input.password);
+  const { token, tokenHash, expiresAt } = mintVerificationToken();
+
+  const client = await deps.pool.connect();
+  try {
+    await client.query('BEGIN');
+
+    const inserted = await client.query(
+      `INSERT INTO accounts (email, password_hash, status, token_hash, token_expires_at)
+       VALUES ($1, $2, $3, $4, $5)
+       RETURNING id`,
+      [input.email, passwordHash, ACCOUNT_STATUS.pending, tokenHash, expiresAt],
+    );
+    const accountId = inserted.rows[0].id as string;
+
+    const job: ConfirmationEmailJob = { accountId, token };
+    await deps.queue.sendInTransaction(CONFIRMATION_EMAIL_QUEUE, job, client);
+
+    await client.query('COMMIT');
+    return { status: 'created', accountId };
+  } catch (err) {
+    await client.query('ROLLBACK');
+    if (isUniqueViolation(err)) return { status: 'duplicate' };
+    throw err;
+  } finally {
+    client.release();
   }
 }
 
