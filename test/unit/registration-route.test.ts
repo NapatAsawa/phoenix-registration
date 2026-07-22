@@ -16,7 +16,7 @@ describe('POST /registrations', () => {
     const port: RegistrationPort = {
       register: async (input) => {
         calls.push(input);
-        return { ok: true, accountId: 'acc-1' } satisfies RegisterResult;
+        return { ok: true, outcome: 'created', accountId: 'acc-1' } satisfies RegisterResult;
       },
     };
     const app = appWith(port);
@@ -37,7 +37,7 @@ describe('POST /registrations', () => {
     const port: RegistrationPort = {
       register: async () => {
         called = true;
-        return { ok: true, accountId: 'x' };
+        return { ok: true, outcome: 'created', accountId: 'x' };
       },
     };
     const app = appWith(port);
@@ -54,7 +54,7 @@ describe('POST /registrations', () => {
   });
 
   it('returns 400 for an out-of-range password', async () => {
-    const app = appWith({ register: async () => ({ ok: true, accountId: 'x' }) });
+    const app = appWith({ register: async () => ({ ok: true, outcome: 'created', accountId: 'x' }) });
     const res = await app.inject({
       method: 'POST',
       url: '/registrations',
@@ -64,7 +64,18 @@ describe('POST /registrations', () => {
     await app.close();
   });
 
-  it('returns 409 when the email is already registered', async () => {
+  it('returns 202 when a still-Pending email is re-registered (handled as a Resend)', async () => {
+    const app = appWith({ register: async () => ({ ok: true, outcome: 'resent' }) });
+    const res = await app.inject({
+      method: 'POST',
+      url: '/registrations',
+      payload: { email: 'a@b.co', password: 'longenough' },
+    });
+    expect(res.statusCode).toBe(202);
+    await app.close();
+  });
+
+  it('returns 409 when the email belongs to an already-Active account', async () => {
     const app = appWith({ register: async () => ({ ok: false, reason: 'duplicate-email' }) });
     const res = await app.inject({
       method: 'POST',
@@ -72,6 +83,17 @@ describe('POST /registrations', () => {
       payload: { email: 'a@b.co', password: 'longenough' },
     });
     expect(res.statusCode).toBe(409);
+    await app.close();
+  });
+
+  it('returns 429 when re-registering a Pending email is throttled', async () => {
+    const app = appWith({ register: async () => ({ ok: false, reason: 'throttled' }) });
+    const res = await app.inject({
+      method: 'POST',
+      url: '/registrations',
+      payload: { email: 'a@b.co', password: 'longenough' },
+    });
+    expect(res.statusCode).toBe(429);
     await app.close();
   });
 });

@@ -20,6 +20,15 @@ export interface RegistrationInput {
   password: string;
 }
 
+/**
+ * Canonical form of an email for storage and lookup: trimmed and lower-cased.
+ * Registration stores this, so every later lookup (Resend, verify) must apply the
+ * same normalization or it won't find the row.
+ */
+export function normalizeEmail(raw: string): string {
+  return raw.trim().toLowerCase();
+}
+
 export type ValidationResult =
   | { ok: true; value: RegistrationInput }
   | { ok: false; errors: string[] };
@@ -35,7 +44,7 @@ export function parseRegistration(body: unknown): ValidationResult {
   const { email, password } = record;
 
   // Normalize before testing so surrounding whitespace and case don't matter.
-  const normalizedEmail = typeof email === 'string' ? email.trim().toLowerCase() : undefined;
+  const normalizedEmail = typeof email === 'string' ? normalizeEmail(email) : undefined;
   if (normalizedEmail === undefined || !EMAIL_PATTERN.test(normalizedEmail)) {
     errors.push('email must be a valid email address');
   }

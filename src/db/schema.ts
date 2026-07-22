@@ -1,4 +1,4 @@
-import { pgTable, uuid, timestamp, text } from 'drizzle-orm/pg-core';
+import { pgTable, uuid, timestamp, text, integer } from 'drizzle-orm/pg-core';
 
 /**
  * The Account lifecycle (CONTEXT.md): Pending on creation, Active once the email
@@ -20,6 +20,12 @@ export type AccountStatus = (typeof ACCOUNT_STATUS)[keyof typeof ACCOUNT_STATUS]
  * worker stores the sha256 of the token it emailed (never the token itself) plus
  * its 24h expiry. They are nullable because they are populated when the
  * Confirmation Email is sent, a step after the account row is created.
+ *
+ * `resend_count` / `last_confirmation_sent_at` back the Layer-1 Resend throttle
+ * (issue #5): the count caps how many fresh Confirmation Emails a Pending Account
+ * may ask for, and the timestamp enforces a minimum interval between sends. Both
+ * are set on creation (the initial Confirmation Email is the first send), so the
+ * interval is measured from registration and the DB owns the policy.
  */
 export const accounts = pgTable('accounts', {
   id: uuid('id').primaryKey().defaultRandom(),
@@ -28,6 +34,10 @@ export const accounts = pgTable('accounts', {
   passwordHash: text('password_hash').notNull(),
   tokenHash: text('token_hash'),
   tokenExpiresAt: timestamp('token_expires_at', { withTimezone: true }),
+  resendCount: integer('resend_count').notNull().default(0),
+  lastConfirmationSentAt: timestamp('last_confirmation_sent_at', { withTimezone: true })
+    .notNull()
+    .defaultNow(),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
 });

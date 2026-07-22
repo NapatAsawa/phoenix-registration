@@ -1,0 +1,2 @@
+ALTER TABLE "accounts" ADD COLUMN "resend_count" integer DEFAULT 0 NOT NULL;--> statement-breakpoint
+ALTER TABLE "accounts" ADD COLUMN "last_confirmation_sent_at" timestamp with time zone DEFAULT now() NOT NULL;
