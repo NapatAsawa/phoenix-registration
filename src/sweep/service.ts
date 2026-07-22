@@ -42,6 +42,8 @@ export const PENDING_TTL_MS = 72 * 60 * 60 * 1000;
 export interface SweepResult {
   /** Pending Accounts hard-deleted, freeing their email. */
   expiredAccounts: number;
+  /** Ids of the expired Accounts, so the worker can log one `account.expired` per row. */
+  expiredAccountIds: string[];
   /** Rows whose consumed/expired token columns were cleared. */
   clearedTokens: number;
 }
@@ -71,5 +73,9 @@ export async function sweepExpiredPending(
       RETURNING id`,
   );
 
-  return { expiredAccounts: expired.rows.length, clearedTokens: cleared.rows.length };
+  return {
+    expiredAccounts: expired.rows.length,
+    expiredAccountIds: expired.rows.map((r) => r.id as string),
+    clearedTokens: cleared.rows.length,
+  };
 }

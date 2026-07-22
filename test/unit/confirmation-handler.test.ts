@@ -35,11 +35,12 @@ describe('confirmation email handler', () => {
     const sender = new CapturingSender();
     const handler = makeConfirmationEmailHandler(deps({ email: 'alice@example.com' }, sender));
 
-    await handler({ accountId: 'acc-1', token: 'tok-abc' });
+    const result = await handler({ accountId: 'acc-1', token: 'tok-abc' });
 
     expect(sender.sent).toHaveLength(1);
     expect(sender.sent[0]!.to).toBe('alice@example.com');
     expect(tokenInBody(sender.sent[0]!)).toBe('tok-abc');
+    expect(result).toEqual({ accountId: 'acc-1', sent: true, email: 'alice@example.com' });
   });
 
   it('re-sends the identical link on retry (same job → same token, ADR-0002)', async () => {
@@ -57,8 +58,9 @@ describe('confirmation email handler', () => {
     const sender = new CapturingSender();
     const handler = makeConfirmationEmailHandler(deps(null, sender));
 
-    await handler({ accountId: 'gone', token: 'tok' });
+    const result = await handler({ accountId: 'gone', token: 'tok' });
 
     expect(sender.sent).toHaveLength(0);
+    expect(result).toEqual({ accountId: 'gone', sent: false });
   });
 });
