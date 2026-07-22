@@ -1,4 +1,4 @@
-import Fastify, { type FastifyInstance } from 'fastify';
+import Fastify, { type FastifyInstance, type FastifyBaseLogger } from 'fastify';
 import { registerRegistrationRoutes, type RegistrationPort } from './api/registrations.js';
 import { registerResendRoutes, type ResendPort } from './api/resend.js';
 import { registerVerificationRoutes, type VerificationPort } from './api/verify.js';
@@ -18,7 +18,14 @@ export interface ReadinessChecks {
 
 export interface BuildAppOptions {
   checks: ReadinessChecks;
-  logger?: boolean;
+  /**
+   * How to log. `false`/omitted is the unit-test default (silent); `true` uses
+   * Fastify's own default logger; a pino instance logs through it — which is how
+   * the API entrypoint passes the shared process logger (issue #7) so HTTP lines
+   * and domain events share one format and carry the per-request `reqId` Fastify
+   * binds onto `request.log`.
+   */
+  logger?: boolean | FastifyBaseLogger;
   /**
    * Registration write side. Optional so the health surface can be built in
    * isolation (as the unit tests do); the API entrypoint always supplies it.
@@ -51,7 +58,11 @@ export interface BuildAppOptions {
  *   (only when `verification` is provided).
  */
 export function buildApp(options: BuildAppOptions): FastifyInstance {
-  const app = Fastify({ logger: options.logger ?? false });
+  // A pino instance goes in as loggerInstance; a boolean toggles Fastify's own.
+  const app =
+    typeof options.logger === 'object'
+      ? Fastify({ loggerInstance: options.logger })
+      : Fastify({ logger: options.logger ?? false });
   const { checks } = options;
 
   app.get('/healthz', async () => ({ status: 'ok' }));

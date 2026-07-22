@@ -16,7 +16,7 @@ function portReturning(outcome: VerifyOutcome): VerificationPort {
 
 describe('GET /verify', () => {
   it('returns 200 verified on first success', async () => {
-    const app = appWith(portReturning({ status: 'verified' }));
+    const app = appWith(portReturning({ status: 'verified', accountId: 'acc-1' }));
     const res = await app.inject({ method: 'GET', url: '/verify?token=abc' });
     expect(res.statusCode).toBe(200);
     expect(res.json()).toEqual({ status: 'verified' });
@@ -43,7 +43,7 @@ describe('GET /verify', () => {
     const app = appWith({
       verify: async (token) => {
         seen.push(token);
-        return { status: 'verified' };
+        return { status: 'verified', accountId: 'acc-1' };
       },
     });
     await app.inject({ method: 'GET', url: '/verify?token=tok-123' });
@@ -56,7 +56,7 @@ describe('GET /verify', () => {
     const app = appWith({
       verify: async () => {
         called = true;
-        return { status: 'verified' };
+        return { status: 'verified', accountId: 'acc-1' };
       },
     });
     const res = await app.inject({ method: 'GET', url: '/verify' });

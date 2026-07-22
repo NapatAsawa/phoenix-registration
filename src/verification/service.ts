@@ -25,7 +25,7 @@ export interface QueryableDb {
 
 export type VerifyOutcome =
   /** First valid follow of the link: the account was Pending and is now Active. */
-  | { status: 'verified' }
+  | { status: 'verified'; accountId: string }
   /** The account was already Active: a repeat/concurrent follow. Harmless. */
   | { status: 'already-verified' }
   /** Token expired or never existed: nothing to activate. */
@@ -44,7 +44,10 @@ export async function verifyToken(db: QueryableDb, token: string): Promise<Verif
      RETURNING id`,
     [ACCOUNT_STATUS.active, tokenHash, ACCOUNT_STATUS.pending],
   );
-  if (activated.rows.length > 0) return { status: 'verified' };
+  const activatedRow = activated.rows[0];
+  if (activatedRow) {
+    return { status: 'verified', accountId: activatedRow.id as string };
+  }
 
   // Zero rows updated. Either the account is already Active (idempotent hit) or
   // the token is expired/unknown. The consumed token row is kept briefly (not

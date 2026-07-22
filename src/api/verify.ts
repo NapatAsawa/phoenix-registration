@@ -1,5 +1,6 @@
 import type { FastifyInstance } from 'fastify';
 import type { VerifyOutcome } from '../verification/service.js';
+import { DOMAIN_EVENT } from '../observability/log.js';
 
 /**
  * The verification HTTP surface, kept separate from `buildApp` so the route's
@@ -27,6 +28,10 @@ export function registerVerificationRoutes(app: FastifyInstance, port: Verificat
     const outcome = await port.verify(token);
     switch (outcome.status) {
       case 'verified':
+        request.log.info(
+          { event: DOMAIN_EVENT.accountVerified, accountId: outcome.accountId },
+          'account verified',
+        );
         return reply.code(200).send({ status: 'verified' });
       case 'already-verified':
         // Same 200 as a first success: following the link again is safe.

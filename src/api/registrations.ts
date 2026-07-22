@@ -2,6 +2,7 @@ import type { FastifyInstance } from 'fastify';
 import { parseRegistration } from '../registration/validation.js';
 import type { RegisterResult } from '../registration/service.js';
 import type { RegistrationInput } from '../registration/validation.js';
+import { DOMAIN_EVENT } from '../observability/log.js';
 
 /**
  * The registration HTTP surface, kept separate from `buildApp` so the route's
@@ -32,7 +33,17 @@ export function registerRegistrationRoutes(app: FastifyInstance, port: Registrat
 
     // 202: the account is Pending and the Confirmation Email is queued, not yet
     // sent — the work is accepted, not complete. A still-Pending re-registration
-    // returns the same 202 (it was handled as a Resend).
+    // returns the same 202 (it was handled as a Resend). The domain event carries
+    // the reqId Fastify bound onto request.log, and the accountId when one was
+    // created (a Resend outcome has none to report).
+    request.log.info(
+      {
+        event: DOMAIN_EVENT.registrationAccepted,
+        outcome: result.outcome,
+        accountId: result.outcome === 'created' ? result.accountId : undefined,
+      },
+      'registration accepted',
+    );
     return reply.code(202).send({ status: 'accepted' });
   });
 }

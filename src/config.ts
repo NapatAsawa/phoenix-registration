@@ -18,6 +18,8 @@ export interface Config {
   publicBaseUrl: string;
   /** How long an unconfirmed Registration lives before the Sweep expires it. */
   pendingTtlMs: number;
+  /** pino log level (`trace`…`fatal`); both entrypoints log at this level. */
+  logLevel: string;
 }
 
 /** Duration suffixes accepted in env vars, expressed in milliseconds. */
@@ -71,5 +73,6 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     apiPort: intWithDefault('API_PORT', env.API_PORT, 3000),
     publicBaseUrl: env.PUBLIC_BASE_URL ?? 'http://localhost:3000',
     pendingTtlMs: durationWithDefault('PENDING_TTL', env.PENDING_TTL, PENDING_TTL_MS),
+    logLevel: env.LOG_LEVEL ?? 'info',
   };
 }

@@ -25,19 +25,32 @@ export interface ConfirmationEmailDeps {
   publicBaseUrl: string;
 }
 
+/**
+ * Outcome of handling one job. `sent` distinguishes a delivery (the caller logs
+ * `confirmation_email.sent`) from a skip (account no longer Pending), and carries
+ * the address so the log line can name it. The handler itself stays free of the
+ * logger — logging is the worker composition's job.
+ */
+export interface ConfirmationEmailResult {
+  accountId: string;
+  sent: boolean;
+  email?: string;
+}
+
 export function makeConfirmationEmailHandler(
   deps: ConfirmationEmailDeps,
-): (job: ConfirmationEmailJob) => Promise<void> {
+): (job: ConfirmationEmailJob) => Promise<ConfirmationEmailResult> {
   return async ({ accountId, token }) => {
     const found = await deps.db.query(
       `SELECT email FROM accounts WHERE id = $1 AND status = $2`,
       [accountId, ACCOUNT_STATUS.pending],
     );
     const row = found.rows[0];
-    if (!row) return; // not Pending (verified/expired) — nothing to send
+    if (!row) return { accountId, sent: false }; // not Pending (verified/expired) — nothing to send
 
     const email = row.email as string;
     const verificationUrl = buildVerificationUrl(deps.publicBaseUrl, token);
     await deps.emailSender.send(buildConfirmationEmail(email, verificationUrl));
+    return { accountId, sent: true, email };
   };
 }

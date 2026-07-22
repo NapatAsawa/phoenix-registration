@@ -42,7 +42,7 @@ describe('verifyToken', () => {
     const accounts: FakeAccount[] = [{ tokenHash: HASH, status: 'pending', expired: false }];
     const db = fakeDb(accounts);
 
-    expect(await verifyToken(db, TOKEN)).toEqual({ status: 'verified' });
+    expect(await verifyToken(db, TOKEN)).toEqual({ status: 'verified', accountId: 'acc-1' });
     expect(accounts[0]!.status).toBe('active');
   });
 
@@ -53,7 +53,7 @@ describe('verifyToken', () => {
 
   it('a second verify of the same token is idempotent (verified then already-verified)', async () => {
     const db = fakeDb([{ tokenHash: HASH, status: 'pending', expired: false }]);
-    expect(await verifyToken(db, TOKEN)).toEqual({ status: 'verified' });
+    expect(await verifyToken(db, TOKEN)).toEqual({ status: 'verified', accountId: 'acc-1' });
     expect(await verifyToken(db, TOKEN)).toEqual({ status: 'already-verified' });
   });
 

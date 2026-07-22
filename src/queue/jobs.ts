@@ -8,6 +8,21 @@
 export const CONFIRMATION_EMAIL_QUEUE = 'confirmation-email';
 
 /**
+ * Dead-letter queue for Confirmation Email jobs. When a send exhausts its retries
+ * pg-boss moves the job here (ADR-0002); the worker consumes this queue to log the
+ * exhaustion at error. The Account is left Pending, so the person can still resend.
+ */
+export const CONFIRMATION_EMAIL_DEAD_LETTER_QUEUE = 'confirmation-email-dead-letter';
+
+/**
+ * Retry policy for the Confirmation Email queue: up to 5 attempts with exponential
+ * backoff, then dead-letter (issue #7, ADR-0002). Set once on the queue definition
+ * (see setupConfirmationEmailQueues) so every enqueue — from registration or a
+ * resend — inherits it without repeating the policy at each send site.
+ */
+export const CONFIRMATION_EMAIL_RETRY_LIMIT = 5;
+
+/**
  * Payload for a Confirmation Email job. The plaintext Verification Token rides
  * here (only its sha256 is stored on the account) so a retry re-sends the *same*
  * link — the same job carries the same token, satisfying ADR-0002's requirement

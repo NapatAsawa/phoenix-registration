@@ -59,6 +59,19 @@ npm run dev:worker
 - `GET /readyz` — readiness, 200 when Postgres is reachable and the queue is started,
   503 otherwise.
 
+## Delivery reliability & logging
+
+The Confirmation Email is delivered at-least-once (ADR-0002): the job retries with
+exponential backoff up to 5 attempts, then moves to a dead-letter queue and is logged at
+error, leaving the Account **Pending** so a resend is still possible. Duplicate delivery is
+harmless because verification is idempotent.
+
+Both entrypoints log structured JSON via pino (`LOG_LEVEL`, default `info`). Every line
+carries a request id — the Fastify per-request `reqId` on the API, the pg-boss job id on
+the worker — and the workflow emits domain-event lines (an `event` field):
+`registration.accepted`, `confirmation_email.sent`, `confirmation_email.dead_lettered`,
+`account.verified`, `account.expired`.
+
 ## Test
 
 ```bash
