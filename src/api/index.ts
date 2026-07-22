@@ -27,7 +27,7 @@ async function main(): Promise<void> {
 
   const app = buildApp({
     checks: readinessChecks({ pool, queue }),
-    loggerInstance: logger,
+    logger,
     registration: {
       register: (input: RegistrationInput) => registerAccount({ pool, queue }, input),
     },

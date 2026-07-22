@@ -3,11 +3,8 @@ import { Queue } from '../../src/queue/queue.js';
 import { startWorker } from '../../src/worker/run.js';
 import { registerAccount } from '../../src/registration/service.js';
 import { verifyToken } from '../../src/verification/service.js';
-import {
-  CONFIRMATION_EMAIL_QUEUE,
-  CONFIRMATION_EMAIL_DEAD_LETTER_QUEUE,
-  SWEEP_QUEUE,
-} from '../../src/queue/jobs.js';
+import { SWEEP_QUEUE } from '../../src/queue/jobs.js';
+import { setupConfirmationEmailQueues } from '../../src/queue/setup.js';
 import { DOMAIN_EVENT } from '../../src/observability/log.js';
 import { ACCOUNT_STATUS } from '../../src/db/schema.js';
 import type { EmailMessage, EmailSender } from '../../src/email/sender.js';
@@ -57,15 +54,11 @@ describe('confirmation email retries then dead-letters (real Postgres + queue)',
     queue = new Queue(pg.databaseUrl);
     await queue.start();
 
-    // Pre-create the queues with a *fast* retry policy (1 retry, no backoff) so the
-    // dead-letter path is exercised in seconds. createQueue is create-once, so the
-    // production policy startWorker also sets is a no-op here — the test policy wins.
-    await queue.createQueue(CONFIRMATION_EMAIL_DEAD_LETTER_QUEUE);
-    await queue.createQueue(CONFIRMATION_EMAIL_QUEUE, {
-      retryLimit: 1,
-      retryBackoff: false,
-      deadLetter: CONFIRMATION_EMAIL_DEAD_LETTER_QUEUE,
-    });
+    // Pin a *fast* retry policy (1 retry, no backoff) so the dead-letter path is
+    // exercised in seconds. createQueue is create-once, so this pre-boot call wins
+    // over the production policy startWorker also applies — same setup helper, no
+    // hand-rolled fork of it.
+    await setupConfirmationEmailQueues(queue, { retryLimit: 1, retryBackoff: false });
 
     cap = captureLogger();
     await startWorker({
@@ -140,9 +133,10 @@ describe('confirmation email happy path + at-least-once verify (real Postgres + 
     );
     const accountId = result.ok && result.outcome === 'created' ? result.accountId : undefined;
 
-    // Worker delivered and logged the send with the accountId + a per-job reqId.
+    // Worker delivered and logged the send with the accountId, email, and a
+    // per-job reqId.
     const sentEvent = await waitFor(() => cap.withEvent(DOMAIN_EVENT.confirmationEmailSent)[0]);
-    expect(sentEvent).toMatchObject({ accountId });
+    expect(sentEvent).toMatchObject({ accountId, email: 'happy@example.com' });
     expect(sentEvent.reqId).toBeDefined();
 
     const message = await waitFor(() => sender.sent.find((m) => m.to === 'happy@example.com'));
@@ -163,8 +157,15 @@ describe('confirmation email happy path + at-least-once verify (real Postgres + 
     );
     const staleId = seeded.rows[0].id as string;
 
-    // Trigger the (normally hourly) Sweep on demand.
-    await queue.send(SWEEP_QUEUE);
+    // Trigger the (normally hourly) Sweep on demand by enqueuing one job.
+    const client = await pg.pool.connect();
+    try {
+      await client.query('BEGIN');
+      await queue.sendInTransaction(SWEEP_QUEUE, {}, client);
+      await client.query('COMMIT');
+    } finally {
+      client.release();
+    }
 
     const expired = await waitFor(() =>
       cap.withEvent(DOMAIN_EVENT.accountExpired).find((l) => l.accountId === staleId),

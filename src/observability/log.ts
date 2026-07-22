@@ -21,7 +21,12 @@ export type { Logger };
  * so the five names live in exactly one place.
  */
 export const DOMAIN_EVENT = {
-  /** A registration was accepted (202): a Pending account created, or a Resend queued. */
+  /**
+   * A request to `POST /registrations` was accepted (202) — a Pending account
+   * created, or (when the email was already Pending) handled as a Resend. Note the
+   * dedicated `POST .../resend` endpoint does not emit this; its delivery is traced
+   * by {@link confirmationEmailSent} from the worker.
+   */
   registrationAccepted: 'registration.accepted',
   /** The worker delivered a Confirmation Email for a still-Pending account. */
   confirmationEmailSent: 'confirmation_email.sent',

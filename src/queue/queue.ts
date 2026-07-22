@@ -93,15 +93,6 @@ export class Queue {
     await this.boss.schedule(name, cron, data);
   }
 
-  /**
-   * Enqueue a single job outside any transaction — e.g. to run a normally
-   * cron-scheduled operation (like the Sweep) on demand. Transactional enqueues
-   * use {@link sendInTransaction} instead.
-   */
-  async send(name: string, data: object = {}): Promise<void> {
-    await this.boss.send(name, data);
-  }
-
   /** Register a consumer for a queue. Errors thrown by `handler` trigger pg-boss retries. */
   async work<T extends object>(name: string, handler: JobHandler<T>): Promise<void> {
     await this.boss.work<T>(name, async (jobs) => {

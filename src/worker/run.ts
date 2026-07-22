@@ -13,6 +13,7 @@ import { makeConfirmationEmailHandler } from '../email/confirmation-handler.js';
 import type { EmailSender } from '../email/sender.js';
 import { sweepExpiredPending } from '../sweep/service.js';
 import { DOMAIN_EVENT, type Logger } from '../observability/log.js';
+import type { JobContext } from '../queue/queue.js';
 
 /**
  * The worker composition root, extracted from the entrypoint so it can be driven
@@ -36,6 +37,11 @@ export interface WorkerDeps {
 export async function startWorker(deps: WorkerDeps): Promise<void> {
   const { pool, queue, logger } = deps;
 
+  // Every worker line traces to its job: bind the pg-boss job id as `reqId`, plus
+  // the queue it came off, on a per-job child logger.
+  const perJobLog = (ctx: JobContext, queueName: string): Logger =>
+    logger.child({ reqId: ctx.jobId, queue: queueName });
+
   await setupConfirmationEmailQueues(queue);
   await queue.createQueue(SWEEP_QUEUE);
 
@@ -48,11 +54,11 @@ export async function startWorker(deps: WorkerDeps): Promise<void> {
     publicBaseUrl: deps.publicBaseUrl,
   });
   await queue.work<ConfirmationEmailJob>(CONFIRMATION_EMAIL_QUEUE, async (data, ctx) => {
-    const log = logger.child({ reqId: ctx.jobId, queue: CONFIRMATION_EMAIL_QUEUE });
+    const log = perJobLog(ctx, CONFIRMATION_EMAIL_QUEUE);
     const result = await handleConfirmationEmail(data);
     if (result.sent) {
       log.info(
-        { event: DOMAIN_EVENT.confirmationEmailSent, accountId: result.accountId },
+        { event: DOMAIN_EVENT.confirmationEmailSent, accountId: result.accountId, email: result.email },
         'confirmation email sent',
       );
     }
@@ -62,7 +68,7 @@ export async function startWorker(deps: WorkerDeps): Promise<void> {
   // here. We only log it at error — the Account is left Pending so the person can
   // still trigger a resend (ADR-0002); the payload is the original job's data.
   await queue.work<ConfirmationEmailJob>(CONFIRMATION_EMAIL_DEAD_LETTER_QUEUE, async (data, ctx) => {
-    const log = logger.child({ reqId: ctx.jobId, queue: CONFIRMATION_EMAIL_DEAD_LETTER_QUEUE });
+    const log = perJobLog(ctx, CONFIRMATION_EMAIL_DEAD_LETTER_QUEUE);
     log.error(
       { event: DOMAIN_EVENT.confirmationEmailDeadLettered, accountId: data.accountId },
       'confirmation email dead-lettered after retries; account left pending',
@@ -73,7 +79,7 @@ export async function startWorker(deps: WorkerDeps): Promise<void> {
   // so one firing runs per hour across all worker replicas). One account.expired
   // line per removed account keeps the expiry traceable.
   await queue.work<SweepJob>(SWEEP_QUEUE, async (_data, ctx) => {
-    const log = logger.child({ reqId: ctx.jobId, queue: SWEEP_QUEUE });
+    const log = perJobLog(ctx, SWEEP_QUEUE);
     const result = await sweepExpiredPending(pool, deps.pendingTtlMs);
     for (const accountId of result.expiredAccountIds) {
       log.info({ event: DOMAIN_EVENT.accountExpired, accountId }, 'pending account expired by sweep');

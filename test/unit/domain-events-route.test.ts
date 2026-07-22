@@ -16,7 +16,7 @@ describe('domain-event log lines on the request path', () => {
     const cap = captureLogger();
     const app = buildApp({
       checks: okChecks,
-      loggerInstance: cap.logger,
+      logger: cap.logger,
       registration: { register: async () => ({ ok: true, outcome: 'created', accountId: 'acc-9' }) },
     });
 
@@ -38,7 +38,7 @@ describe('domain-event log lines on the request path', () => {
     const cap = captureLogger();
     const app = buildApp({
       checks: okChecks,
-      loggerInstance: cap.logger,
+      logger: cap.logger,
       registration: { register: async () => ({ ok: false, reason: 'duplicate-email' }) },
     });
 
@@ -56,7 +56,7 @@ describe('domain-event log lines on the request path', () => {
     const cap = captureLogger();
     const app = buildApp({
       checks: okChecks,
-      loggerInstance: cap.logger,
+      logger: cap.logger,
       verification: { verify: async () => ({ status: 'verified', accountId: 'acc-3' }) },
     });
 
@@ -74,7 +74,7 @@ describe('domain-event log lines on the request path', () => {
     const cap = captureLogger();
     const app = buildApp({
       checks: okChecks,
-      loggerInstance: cap.logger,
+      logger: cap.logger,
       verification: { verify: async () => ({ status: 'already-verified' }) },
     });
 
