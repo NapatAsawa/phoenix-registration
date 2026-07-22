@@ -5,6 +5,7 @@ import { CONFIRMATION_EMAIL_QUEUE } from '../queue/jobs.js';
 import { buildApp } from '../app.js';
 import { readinessChecks } from '../runtime.js';
 import { registerAccount } from '../registration/service.js';
+import { verifyToken } from '../verification/service.js';
 import type { RegistrationInput } from '../registration/validation.js';
 
 /**
@@ -25,6 +26,9 @@ async function main(): Promise<void> {
     logger: true,
     registration: {
       register: (input: RegistrationInput) => registerAccount({ pool, queue }, input),
+    },
+    verification: {
+      verify: (token: string) => verifyToken(pool, token),
     },
   });
 
