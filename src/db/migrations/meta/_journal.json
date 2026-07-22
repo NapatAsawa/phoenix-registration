@@ -15,6 +15,13 @@
       "when": 1784647320913,
       "tag": "0001_vengeful_yellow_claw",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1784726370239,
+      "tag": "0002_abnormal_jackpot",
+      "breakpoints": true
     }
   ]
 }

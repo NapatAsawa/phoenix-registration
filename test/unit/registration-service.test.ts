@@ -15,15 +15,21 @@ class FakeClient {
   released = false;
   insertError: Error | null = null;
   insertValues: unknown[] | undefined;
+  /** When set, a classification SELECT (Resend path) reports this account status. */
+  existingStatus: string | null = null;
 
-  async query(text: string, values?: unknown[]): Promise<{ rows: Array<{ id: string }> }> {
+  async query(text: string, values?: unknown[]): Promise<{ rows: Array<Record<string, unknown>> }> {
     const verb = text.trim().split(/\s+/)[0]!.toUpperCase();
-    this.calls.push(verb === 'INSERT' ? 'INSERT' : text.trim());
+    this.calls.push(verb === 'INSERT' ? 'INSERT' : verb);
     if (verb === 'INSERT') {
       if (this.insertError) throw this.insertError;
       this.insertValues = values;
       return { rows: [{ id: 'acc-1' }] };
     }
+    if (verb === 'SELECT') {
+      return { rows: this.existingStatus ? [{ status: this.existingStatus }] : [] };
+    }
+    // BEGIN / COMMIT / ROLLBACK, and the Resend UPDATE (no eligible row here).
     return { rows: [] };
   }
 
@@ -52,7 +58,7 @@ describe('registerAccount transaction', () => {
 
     const result = await registerAccount({ pool: fakePool(client), queue }, input);
 
-    expect(result).toEqual({ ok: true, accountId: 'acc-1' });
+    expect(result).toEqual({ ok: true, outcome: 'created', accountId: 'acc-1' });
     expect(client.calls).toEqual(['BEGIN', 'INSERT', 'COMMIT']);
     expect(client.released).toBe(true);
 
@@ -85,15 +91,44 @@ describe('registerAccount transaction', () => {
     expect(client.released).toBe(true);
   });
 
-  it('reports duplicate-email (and rolls back) on a UNIQUE violation', async () => {
+  it('reports duplicate-email on a UNIQUE violation against an already-Active account', async () => {
+    // Insert collides; the Resend path then classifies the existing row as Active,
+    // so the collision is a genuine 409 (not a Resend). Issue #5.
     const client = new FakeClient();
     client.insertError = Object.assign(new Error('dup'), { code: '23505' });
+    client.existingStatus = 'active';
     const queue: EnqueuerLike = { sendInTransaction: async () => {} };
 
     const result = await registerAccount({ pool: fakePool(client), queue }, input);
 
     expect(result).toEqual({ ok: false, reason: 'duplicate-email' });
-    expect(client.calls).toEqual(['BEGIN', 'INSERT', 'ROLLBACK']);
+    // Insert rolls back, then the Resend UPDATE matches nothing and a SELECT
+    // reveals the Active account.
+    expect(client.calls).toEqual(['BEGIN', 'INSERT', 'ROLLBACK', 'BEGIN', 'UPDATE', 'ROLLBACK', 'SELECT']);
     expect(client.released).toBe(true);
+  });
+
+  it('handles a UNIQUE violation against a still-Pending account as a Resend', async () => {
+    // Insert collides; the existing row is Pending and eligible, so a fresh
+    // Confirmation Email is enqueued and the result is a Resend (issue #5).
+    const client = new FakeClient();
+    client.insertError = Object.assign(new Error('dup'), { code: '23505' });
+    // Model an eligible Pending row: the Resend UPDATE returns a row.
+    const original = client.query.bind(client);
+    client.query = async (text: string, values?: unknown[]) => {
+      const verb = text.trim().split(/\s+/)[0]!.toUpperCase();
+      if (verb === 'UPDATE') {
+        client.calls.push('UPDATE');
+        return { rows: [{ id: 'acc-1' }] };
+      }
+      return original(text, values);
+    };
+    const enqueued: unknown[] = [];
+    const queue: EnqueuerLike = { sendInTransaction: async (name, data) => void enqueued.push({ name, data }) };
+
+    const result = await registerAccount({ pool: fakePool(client), queue }, input);
+
+    expect(result).toEqual({ ok: true, outcome: 'resent' });
+    expect(enqueued).toHaveLength(1);
   });
 });

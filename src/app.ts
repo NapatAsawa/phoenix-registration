@@ -1,5 +1,6 @@
 import Fastify, { type FastifyInstance } from 'fastify';
 import { registerRegistrationRoutes, type RegistrationPort } from './api/registrations.js';
+import { registerResendRoutes, type ResendPort } from './api/resend.js';
 import { registerVerificationRoutes, type VerificationPort } from './api/verify.js';
 
 /**
@@ -24,6 +25,11 @@ export interface BuildAppOptions {
    */
   registration?: RegistrationPort;
   /**
+   * Resend write side (`POST /registrations/{email}/resend`). Optional for the
+   * same reason as `registration`; the API entrypoint always supplies it.
+   */
+  resend?: ResendPort;
+  /**
    * Verification write side (`GET /verify`). Optional for the same reason as
    * `registration`; the API entrypoint always supplies it.
    */
@@ -39,6 +45,8 @@ export interface BuildAppOptions {
  *   started; 503 otherwise.
  * - `POST /registrations`: creates a Pending Account and queues its Confirmation
  *   Email (only when `registration` is provided).
+ * - `POST /registrations/{email}/resend`: reissues the Confirmation Email for a
+ *   still-Pending Account, throttled (only when `resend` is provided).
  * - `GET /verify`: flips a Pending Account to Active by its Verification Token
  *   (only when `verification` is provided).
  */
@@ -68,6 +76,10 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
 
   if (options.registration) {
     registerRegistrationRoutes(app, options.registration);
+  }
+
+  if (options.resend) {
+    registerResendRoutes(app, options.resend);
   }
 
   if (options.verification) {

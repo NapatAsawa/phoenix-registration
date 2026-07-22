@@ -122,7 +122,11 @@ describe('registration → confirmation email (real Postgres + queue)', () => {
     expect(res.statusCode).toBe(400);
   });
 
-  it('duplicate email → 409, no second account', async () => {
+  it('duplicate of an already-Active email → 409, no second account', async () => {
+    // Once alice's account is Active, a second registration is a genuine collision
+    // (a still-Pending duplicate would instead be a throttled Resend — issue #5).
+    await pg.pool.query(`UPDATE accounts SET status = 'active' WHERE email = $1`, ['alice@example.com']);
+
     const res = await app.inject({
       method: 'POST',
       url: '/registrations',

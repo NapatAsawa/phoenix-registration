@@ -1,5 +1,6 @@
 import type { PoolClient } from 'pg';
 import { hashPassword } from './password.js';
+import { resendConfirmation } from './resend.js';
 import { generateVerificationToken, VERIFICATION_TOKEN_TTL_MS } from './token.js';
 import type { RegistrationInput } from './validation.js';
 import { ACCOUNT_STATUS } from '../db/schema.js';
@@ -38,10 +39,19 @@ export interface RegisterDeps {
 }
 
 export type RegisterResult =
-  | { ok: true; accountId: string }
-  // Email already registered. The UNIQUE constraint is the source of truth, so
-  // this is reported by the database under concurrency, not a pre-check.
-  | { ok: false; reason: 'duplicate-email' };
+  /** A new Pending Account was created and its Confirmation Email queued. */
+  | { ok: true; outcome: 'created'; accountId: string }
+  /**
+   * The email already belonged to a still-Pending Account, so this registration
+   * was handled as a Resend (issue #5): a fresh Confirmation Email was queued.
+   */
+  | { ok: true; outcome: 'resent' }
+  // Email already registered to an Active Account. The UNIQUE constraint is the
+  // source of truth, so the collision is reported by the database under
+  // concurrency, not a pre-check.
+  | { ok: false; reason: 'duplicate-email' }
+  /** The Pending Account is currently over the Resend interval or cap (→ 429). */
+  | { ok: false; reason: 'throttled' };
 
 const UNIQUE_VIOLATION = '23505';
 
@@ -71,15 +81,30 @@ export async function registerAccount(
     await deps.queue.sendInTransaction(CONFIRMATION_EMAIL_QUEUE, job, client);
 
     await client.query('COMMIT');
-    return { ok: true, accountId };
+    client.release();
+    return { ok: true, outcome: 'created', accountId };
   } catch (err) {
     await client.query('ROLLBACK');
-    if (isUniqueViolation(err)) {
-      return { ok: false, reason: 'duplicate-email' };
-    }
-    throw err;
-  } finally {
     client.release();
+    if (!isUniqueViolation(err)) throw err;
+    // Fell through only on a duplicate email. Release first (above) so we don't
+    // hold two connections while the Resend path opens its own.
+  }
+
+  // The email is taken. If the existing Account is still Pending this is a Resend;
+  // if it's Active it's a genuine collision (409). Reuse the throttled Resend path
+  // so the interval/cap apply to the registration entry point too (issue #5).
+  const resend = await resendConfirmation(deps, input.email);
+  if (resend.ok) return { ok: true, outcome: 'resent' };
+  switch (resend.reason) {
+    case 'not-pending':
+      return { ok: false, reason: 'duplicate-email' };
+    case 'throttled':
+      return { ok: false, reason: 'throttled' };
+    case 'not-found':
+      // The row vanished between the UNIQUE violation and the Resend (a Sweep in
+      // the gap, issue #6). Vanishingly rare; report taken and let the client retry.
+      return { ok: false, reason: 'duplicate-email' };
   }
 }
 
