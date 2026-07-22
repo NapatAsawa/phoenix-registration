@@ -58,6 +58,15 @@ export class Queue {
     });
   }
 
+  /**
+   * Schedule a recurring job on a queue via cron. pg-boss enqueues one job per
+   * firing; a registered {@link work} consumer runs it. Idempotent on the
+   * (queue, cron) pair, so it's safe to call on every worker boot.
+   */
+  async schedule(name: string, cron: string, data: object = {}): Promise<void> {
+    await this.boss.schedule(name, cron, data);
+  }
+
   /** Register a consumer for a queue. Errors thrown by `handler` trigger pg-boss retries. */
   async work<T extends object>(name: string, handler: JobHandler<T>): Promise<void> {
     await this.boss.work<T>(name, async (jobs) => {

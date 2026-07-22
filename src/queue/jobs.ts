@@ -17,3 +17,16 @@ export interface ConfirmationEmailJob {
   accountId: string;
   token: string;
 }
+
+/** Queue that carries the periodic Sweep of expired Pending accounts (issue #6). */
+export const SWEEP_QUEUE = 'sweep-expired-pending';
+
+/**
+ * Cron for the Sweep: top of every hour. The Sweep is idempotent and TTL-based,
+ * so the exact firing time doesn't matter — hourly is frequent enough to free
+ * emails promptly without churning the table.
+ */
+export const SWEEP_CRON = '0 * * * *';
+
+/** The Sweep job carries no payload; the operation reads the whole table. */
+export type SweepJob = Record<string, never>;
