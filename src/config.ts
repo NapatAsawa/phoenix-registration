@@ -6,6 +6,8 @@
  * reaching for `process.env` themselves.
  */
 
+import { PENDING_TTL_MS } from './sweep/service.js';
+
 export interface Config {
   nodeEnv: string;
   /** Postgres connection string, shared by the write model and pg-boss. */
@@ -14,7 +16,18 @@ export interface Config {
   apiPort: number;
   /** Base URL verification links are built from. */
   publicBaseUrl: string;
+  /** How long an unconfirmed Registration lives before the Sweep expires it. */
+  pendingTtlMs: number;
 }
+
+/** Duration suffixes accepted in env vars, expressed in milliseconds. */
+const DURATION_UNITS: Record<string, number> = {
+  ms: 1,
+  s: 1000,
+  m: 60_000,
+  h: 3_600_000,
+  d: 86_400_000,
+};
 
 function required(name: string, value: string | undefined): string {
   if (value === undefined || value === '') {
@@ -30,11 +43,33 @@ function intWithDefault(name: string, value: string | undefined, fallback: numbe
   return n;
 }
 
+/**
+ * Parse a duration like `72h`, `24h`, `60s`, `500ms` into milliseconds. This is
+ * the form the TTL knobs use in `.env.example`, so config stays readable rather
+ * than forcing raw millisecond counts. Falls back when the var is unset.
+ */
+export function durationWithDefault(
+  name: string,
+  value: string | undefined,
+  fallbackMs: number,
+): number {
+  if (value === undefined || value === '') return fallbackMs;
+  const match = /^(\d+)(ms|s|m|h|d)$/.exec(value.trim());
+  const amount = match?.[1];
+  const unit = match?.[2];
+  const unitMs = unit === undefined ? undefined : DURATION_UNITS[unit];
+  if (amount === undefined || unitMs === undefined) {
+    throw new Error(`Env var ${name} must be a duration like 72h, got: ${value}`);
+  }
+  return Number(amount) * unitMs;
+}
+
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
   return {
     nodeEnv: env.NODE_ENV ?? 'development',
     databaseUrl: required('DATABASE_URL', env.DATABASE_URL),
     apiPort: intWithDefault('API_PORT', env.API_PORT, 3000),
     publicBaseUrl: env.PUBLIC_BASE_URL ?? 'http://localhost:3000',
+    pendingTtlMs: durationWithDefault('PENDING_TTL', env.PENDING_TTL, PENDING_TTL_MS),
   };
 }

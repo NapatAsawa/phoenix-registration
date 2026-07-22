@@ -37,7 +37,7 @@ async function main(): Promise<void> {
   // schedule, so it survives restarts and one firing runs per hour across all
   // worker replicas). The handler just drives the operation against Postgres.
   await queue.work<SweepJob>(SWEEP_QUEUE, async () => {
-    const result = await sweepExpiredPending(pool);
+    const result = await sweepExpiredPending(pool, config.pendingTtlMs);
     console.log(
       `worker: sweep expired ${result.expiredAccounts} pending account(s), cleared ${result.clearedTokens} token(s)`,
     );
