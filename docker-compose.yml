@@ -43,8 +43,10 @@ services:
       context: .
       dockerfile: Dockerfile
     command: ["node", "dist/api/index.js"]
+    # development (not production) so this demo stack serves the throwaway UI at /
+    # and the dev-only GET /dev/latest-link. In production that endpoint is withheld.
     environment:
-      NODE_ENV: production
+      NODE_ENV: development
       DATABASE_URL: postgres://postgres:postgres@postgres:5432/phoenix
       API_PORT: "3000"
       PUBLIC_BASE_URL: http://localhost:3000
@@ -61,14 +63,22 @@ services:
       context: .
       dockerfile: Dockerfile
     command: ["node", "dist/worker/index.js"]
+    # Route Confirmation Emails to Mailpit so the link is viewable in its inbox
+    # (http://localhost:8025). PUBLIC_BASE_URL matches the api so the emailed link
+    # points back at the host-published API port.
     environment:
       NODE_ENV: production
       DATABASE_URL: postgres://postgres:postgres@postgres:5432/phoenix
+      PUBLIC_BASE_URL: http://localhost:3000
+      EMAIL_TRANSPORT: smtp
+      SMTP_URL: smtp://mailpit:1025
     depends_on:
       postgres:
         condition: service_healthy
       migrate:
         condition: service_completed_successfully
+      mailpit:
+        condition: service_started
 
 volumes:
   pgdata:

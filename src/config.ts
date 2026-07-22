@@ -8,6 +8,9 @@
 
 import { PENDING_TTL_MS } from './sweep/service.js';
 
+/** Outbound-email transports the worker can select via `EMAIL_TRANSPORT`. */
+export type EmailTransport = 'console' | 'smtp';
+
 export interface Config {
   nodeEnv: string;
   /** Postgres connection string, shared by the write model and pg-boss. */
@@ -20,6 +23,14 @@ export interface Config {
   pendingTtlMs: number;
   /** pino log level (`trace`…`fatal`); both entrypoints log at this level. */
   logLevel: string;
+  /**
+   * Which outbound-email transport the worker builds (issue #8). `console` (the
+   * default) writes the Confirmation Email to stdout so the flow runs with no mail
+   * server; `smtp` delivers to a real SMTP endpoint (Mailpit in the demo stack).
+   */
+  emailTransport: EmailTransport;
+  /** SMTP endpoint used when `emailTransport` is `smtp`; Mailpit listens here. */
+  smtpUrl: string;
 }
 
 /** Duration suffixes accepted in env vars, expressed in milliseconds. */
@@ -30,6 +41,12 @@ const DURATION_UNITS: Record<string, number> = {
   h: 3_600_000,
   d: 86_400_000,
 };
+
+function emailTransport(value: string | undefined): EmailTransport {
+  if (value === undefined || value === '' || value === 'console') return 'console';
+  if (value === 'smtp') return 'smtp';
+  throw new Error(`Env var EMAIL_TRANSPORT must be 'console' or 'smtp', got: ${value}`);
+}
 
 function required(name: string, value: string | undefined): string {
   if (value === undefined || value === '') {
@@ -74,5 +91,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     publicBaseUrl: env.PUBLIC_BASE_URL ?? 'http://localhost:3000',
     pendingTtlMs: durationWithDefault('PENDING_TTL', env.PENDING_TTL, PENDING_TTL_MS),
     logLevel: env.LOG_LEVEL ?? 'info',
+    emailTransport: emailTransport(env.EMAIL_TRANSPORT),
+    smtpUrl: env.SMTP_URL ?? 'smtp://localhost:1025',
   };
 }

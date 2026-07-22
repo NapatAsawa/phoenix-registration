@@ -9,6 +9,7 @@ import { registerAccount } from '../registration/service.js';
 import { resendConfirmation } from '../registration/resend.js';
 import { verifyToken } from '../verification/service.js';
 import type { RegistrationInput } from '../registration/validation.js';
+import { LatestLinkStore, recordConfirmationLinks } from '../dev/latest-link.js';
 
 /**
  * API entrypoint: serves the HTTP surface. It starts its own pg-boss instance so
@@ -25,18 +26,30 @@ async function main(): Promise<void> {
   // with the retry policy; creating them is idempotent.
   await setupConfirmationEmailQueues(queue);
 
+  // Dev affordance (issue #8): capture each confirmation link as it is enqueued so
+  // `GET /dev/latest-link` can hand it back. Both the capture and the route are
+  // withheld in production — nothing wraps the queue and nothing reads the store —
+  // so the plaintext-link store simply does not exist there.
+  const isProduction = config.nodeEnv === 'production';
+  const latestLinks = new LatestLinkStore();
+  const enqueuer = isProduction
+    ? queue
+    : recordConfirmationLinks(queue, latestLinks, config.publicBaseUrl);
+
   const app = buildApp({
     checks: readinessChecks({ pool, queue }),
     logger,
     registration: {
-      register: (input: RegistrationInput) => registerAccount({ pool, queue }, input),
+      register: (input: RegistrationInput) => registerAccount({ pool, queue: enqueuer }, input),
     },
     resend: {
-      resend: (email: string) => resendConfirmation({ pool, queue }, email),
+      resend: (email: string) => resendConfirmation({ pool, queue: enqueuer }, email),
     },
     verification: {
       verify: (token: string) => verifyToken(pool, token),
     },
+    ui: true,
+    latestLink: isProduction ? undefined : latestLinks,
   });
 
   const shutdown = async (): Promise<void> => {

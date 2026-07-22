@@ -1,7 +1,7 @@
 import { loadConfig } from '../config.js';
 import { createPool } from '../db/client.js';
 import { Queue } from '../queue/queue.js';
-import { ConsoleEmailSender } from '../email/sender.js';
+import { createEmailSender } from '../email/transport.js';
 import { createLogger } from '../observability/log.js';
 import { startWorker } from './run.js';
 
@@ -22,13 +22,16 @@ async function main(): Promise<void> {
   await startWorker({
     pool,
     queue,
-    emailSender: new ConsoleEmailSender(),
+    emailSender: createEmailSender({ transport: config.emailTransport, smtpUrl: config.smtpUrl }),
     logger,
     publicBaseUrl: config.publicBaseUrl,
     pendingTtlMs: config.pendingTtlMs,
   });
 
-  logger.info('worker: queue started, consuming confirmation-email + sweep jobs');
+  logger.info(
+    { emailTransport: config.emailTransport },
+    'worker: queue started, consuming confirmation-email + sweep jobs',
+  );
 
   const shutdown = async (): Promise<void> => {
     await queue.stop();

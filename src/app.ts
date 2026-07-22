@@ -2,6 +2,9 @@ import Fastify, { type FastifyInstance, type FastifyBaseLogger } from 'fastify';
 import { registerRegistrationRoutes, type RegistrationPort } from './api/registrations.js';
 import { registerResendRoutes, type ResendPort } from './api/resend.js';
 import { registerVerificationRoutes, type VerificationPort } from './api/verify.js';
+import { registerUiRoutes } from './api/ui.js';
+import { registerLatestLinkRoutes } from './api/dev.js';
+import type { LatestLinkPort } from './dev/latest-link.js';
 
 /**
  * Readiness dependencies the app probes on `GET /readyz`. Passing these as
@@ -41,6 +44,17 @@ export interface BuildAppOptions {
    * `registration`; the API entrypoint always supplies it.
    */
   verification?: VerificationPort;
+  /**
+   * When true, serves the throwaway demo UI at `/` (issue #8). Off in unit tests
+   * that only exercise the JSON surface.
+   */
+  ui?: boolean;
+  /**
+   * Dev-only latest-link read side (`GET /dev/latest-link`). Supplied by the API
+   * entrypoint only outside production; when omitted the route is not registered,
+   * so it is unreachable in production by construction.
+   */
+  latestLink?: LatestLinkPort;
 }
 
 /**
@@ -56,6 +70,9 @@ export interface BuildAppOptions {
  *   still-Pending Account, throttled (only when `resend` is provided).
  * - `GET /verify`: flips a Pending Account to Active by its Verification Token
  *   (only when `verification` is provided).
+ * - `GET /`: the throwaway demo UI (only when `ui` is set).
+ * - `GET /dev/latest-link`: the dev-only latest confirmation link (only when
+ *   `latestLink` is provided — the entrypoint withholds it in production).
  */
 export function buildApp(options: BuildAppOptions): FastifyInstance {
   // A pino instance goes in as loggerInstance; a boolean toggles Fastify's own.
@@ -95,6 +112,14 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
 
   if (options.verification) {
     registerVerificationRoutes(app, options.verification);
+  }
+
+  if (options.ui) {
+    registerUiRoutes(app);
+  }
+
+  if (options.latestLink) {
+    registerLatestLinkRoutes(app, options.latestLink);
   }
 
   return app;

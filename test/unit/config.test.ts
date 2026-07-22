@@ -39,4 +39,26 @@ describe('loadConfig', () => {
     const config = loadConfig({ ...base, PENDING_TTL: '1h' } as NodeJS.ProcessEnv);
     expect(config.pendingTtlMs).toBe(60 * 60 * 1000);
   });
+
+  it('defaults EMAIL_TRANSPORT to console and SMTP_URL to Mailpit', () => {
+    const config = loadConfig(base as NodeJS.ProcessEnv);
+    expect(config.emailTransport).toBe('console');
+    expect(config.smtpUrl).toBe('smtp://localhost:1025');
+  });
+
+  it('reads EMAIL_TRANSPORT=smtp and SMTP_URL from the env', () => {
+    const config = loadConfig({
+      ...base,
+      EMAIL_TRANSPORT: 'smtp',
+      SMTP_URL: 'smtp://mailpit:1025',
+    } as NodeJS.ProcessEnv);
+    expect(config.emailTransport).toBe('smtp');
+    expect(config.smtpUrl).toBe('smtp://mailpit:1025');
+  });
+
+  it('rejects an unknown EMAIL_TRANSPORT', () => {
+    expect(() =>
+      loadConfig({ ...base, EMAIL_TRANSPORT: 'sendgrid' } as NodeJS.ProcessEnv),
+    ).toThrow(/EMAIL_TRANSPORT/);
+  });
 });
